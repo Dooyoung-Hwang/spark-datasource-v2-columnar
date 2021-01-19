@@ -19,7 +19,8 @@ import java.{util => ju}
 import java.nio.ByteBuffer
 import java.nio.channels.Channels
 
-import io.netty.buffer.ArrowBuf
+import org.apache.arrow.memory.ArrowBuf
+
 import org.apache.arrow.memory.BufferAllocator
 import org.apache.arrow.util.AutoCloseables
 import org.apache.arrow.vector.{FieldVector, VectorLoader, VectorSchemaRoot, VectorUnloader}
