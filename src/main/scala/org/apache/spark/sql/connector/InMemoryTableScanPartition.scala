@@ -24,9 +24,13 @@ case class InMemoryTableScanPartition(arrowSchema: Array[Byte], recordBatch: Arr
   extends InputPartition
 
 object InMemoryTableScanPartition {
-  def apply(schema: StructType, fieldVectors: ju.List[FieldVector]): InMemoryTableScanPartition = {
+  def apply(
+      schema: StructType,
+      fieldVectors: ju.List[FieldVector],
+      timeZone: String
+  ): InMemoryTableScanPartition = {
     val schemaBinary: Array[Byte] = ArrowAdapter.serializeStructTypeToArrowSchemaBinary(
-      schema, null)
+      schema, timeZone)
     val recordBatchBinary = ArrowAdapter.serializeFieldVectors(fieldVectors)
     InMemoryTableScanPartition(schemaBinary, recordBatchBinary)
   }

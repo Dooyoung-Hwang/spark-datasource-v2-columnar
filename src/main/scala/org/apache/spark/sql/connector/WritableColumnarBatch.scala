@@ -15,90 +15,137 @@
 package org.apache.spark.sql.connector
 
 import java.{util => ju}
-import org.apache.arrow.vector.{BigIntVector, BitVector, FieldVector, Float4Vector, Float8Vector, IntVector, SmallIntVector, TinyIntVector, VarCharVector, VectorSchemaRoot, VectorUnloader}
-import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.util.ArrowUtils
 
-import scala.collection.JavaConverters._
+import org.apache.arrow.vector.{BigIntVector, BitVector, FieldVector, Float4Vector, Float8Vector, IntVector, SmallIntVector, TimeStampMicroTZVector, TinyIntVector, ValueVector, VarCharVector}
+import org.apache.arrow.vector.complex.{ListVector, StructVector}
+
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.SpecializedGetters
+import org.apache.spark.sql.types.{ArrayType, StructType}
 
 class WritableColumnarBatch(
-    var numRows: Int,
-    schema: StructType
+    schema: StructType,
+    val timeZone: String
 ) extends AutoCloseable {
+
+  private var numRows: Int = 0
 
   private val writableColumnarVector: Array[FieldVector] =
     schema.fields.map {
-      field => val vec = ArrowAdapter.toArrowMinorType(field).getNewVector(
-        ArrowUtils.toArrowField(field.name, field.dataType, field.nullable, null),
-        OffHeapAllocator.bufferAllocator, null)
-        vec
+      field =>
+        ArrowAdapter.createFieldVector(field, OffHeapAllocator.bufferAllocator, timeZone)
     }
 
   override def close(): Unit = writableColumnarVector.foreach(vec => vec.close())
 
-  def appendRows(internalRows: Seq[InternalRow]): Unit = {
-    for (ordinal <- schema.fields.indices) {
-      writableColumnarVector(ordinal) match {
-        case vec: BitVector =>
-          internalRows.zipWithIndex.foreach {
-            case (row, i) =>
-              if (row.isNullAt(ordinal)) vec.setSafe(numRows + i, 0, 0)
-              else vec.setSafe(numRows + i, if (row.getBoolean(ordinal)) 1 else 0)
+  def appendToValueVector(
+      valueVector: ValueVector,
+      getter: SpecializedGetters,
+      startIndex: Int,
+      numValues: Int
+  ): Unit = {
+    valueVector match {
+      case vec: BitVector =>
+        for (i <- 0 until numValues) {
+          if (getter.isNullAt(i)) vec.setNull(startIndex + i)
+          else vec.setSafe(startIndex + i, if (getter.getBoolean(i)) 1 else 0)
+        }
+
+      case vec: TinyIntVector =>
+        for (i <- 0 until numValues) {
+          if (getter.isNullAt(i)) vec.setNull(startIndex + i)
+          else vec.setSafe(startIndex + i, getter.getByte(i))
+        }
+
+      case vec: SmallIntVector =>
+        for (i <- 0 until numValues) {
+          if (getter.isNullAt(i)) vec.setNull(startIndex + i)
+          else vec.setSafe(startIndex + i, getter.getShort(i))
+        }
+
+      case vec: IntVector =>
+        for (i <- 0 until numValues) {
+          if (getter.isNullAt(i)) vec.setNull(startIndex + i)
+          else vec.setSafe(startIndex + i, getter.getInt(i))
+        }
+
+      case vec: BigIntVector =>
+        for (i <- 0 until numValues) {
+          if (getter.isNullAt(i)) vec.setNull(startIndex + i)
+          else vec.setSafe(startIndex + i, getter.getLong(i))
+        }
+
+      case vec: Float4Vector =>
+        for (i <- 0 until numValues) {
+          if (getter.isNullAt(i)) vec.setNull(startIndex + i)
+          else vec.setSafe(startIndex + i, getter.getFloat(i))
+        }
+
+      case vec: Float8Vector =>
+        for (i <- 0 until numValues) {
+          if (getter.isNullAt(i)) vec.setNull(startIndex + i)
+          else vec.setSafe(startIndex + i, getter.getDouble(i))
+        }
+
+      case vec: VarCharVector =>
+        for (i <- 0 until numValues) {
+          if (getter.isNullAt(i)) vec.setNull(startIndex + i)
+          else vec.setSafe(startIndex + i, getter.getUTF8String(i).getBytes)
+        }
+
+      case vec: TimeStampMicroTZVector =>
+        for (i <- 0 until numValues) {
+          if (getter.isNullAt(i)) vec.setNull(startIndex + i)
+          else vec.setSafe(startIndex + i, getter.getLong(i))
+        }
+
+      case vec: ListVector =>
+        val childVec = vec.getChildrenFromFields.get(0)
+        for (i <- 0 until numValues if !getter.isNullAt(i)) {
+          val ret = vec.startNewValue(startIndex + i)
+          appendToValueVector(childVec, getter.getArray(i), ret, getter.getArray(i).numElements())
+          vec.endValue(startIndex + i, getter.getArray(i).numElements())
+        }
+
+      case vec: StructVector =>
+        val childVec = vec.getChildrenFromFields
+        for (i <- 0 until numValues if !getter.isNullAt(i)) {
+          vec.setIndexDefined(startIndex + i)
+          val columnarGetters = new ColumnarGetters(
+            IndexedSeq(getter.getStruct(i, childVec.size())), childVec.size())
+          for ((getter, j) <- columnarGetters.zipWithIndex) {
+            appendToValueVector(childVec.get(j), getter, startIndex + i, 1)
           }
-        case vec: TinyIntVector =>
-          internalRows.zipWithIndex.foreach {
-            case (row, i) =>
-              if (row.isNullAt(ordinal)) vec.setSafe(numRows + i, 0, 0)
-              else vec.setSafe(numRows + i, row.getByte(ordinal))
-          }
-        case vec: SmallIntVector =>
-          internalRows.zipWithIndex.foreach {
-            case (row, i) =>
-              if (row.isNullAt(ordinal)) vec.setSafe(numRows + i, 0, 0)
-              else vec.setSafe(numRows + i, row.getShort(ordinal))
-          }
-        case vec: IntVector =>
-          internalRows.zipWithIndex.foreach {
-            case (row, i) =>
-              if (row.isNullAt(ordinal)) vec.setSafe(numRows + i, 0, 0)
-              else vec.setSafe(numRows + i, row.getInt(ordinal))
-          }
-        case vec: BigIntVector =>
-          internalRows.zipWithIndex.foreach {
-            case (row, i) =>
-              if (row.isNullAt(ordinal)) vec.setSafe(numRows + i, 0, 0)
-              else vec.setSafe(numRows + i, row.getLong(ordinal))
-          }
-        case vec: Float4Vector =>
-          internalRows.zipWithIndex.foreach {
-            case (row, i) =>
-              if (row.isNullAt(ordinal)) vec.setSafe(numRows + i, 0, 0)
-              else vec.setSafe(numRows + i, row.getFloat(ordinal))
-          }
-        case vec: Float8Vector =>
-          internalRows.zipWithIndex.foreach {
-            case (row, i) =>
-              if (row.isNullAt(ordinal)) vec.setSafe(numRows + i, 0, 0)
-              else vec.setSafe(numRows + i, row.getDouble(ordinal))
-          }
-        case vec: VarCharVector =>
-          internalRows.zipWithIndex.foreach {
-            case (row, i) =>
-              if (row.isNullAt(ordinal)) vec.setNull(numRows + i)
-              else vec.setSafe(numRows + i, row.getUTF8String(ordinal).getBytes)
-          }
-        case vec =>
-          throw new UnsupportedOperationException(s"Unsupported vector type: ${vec.getField}")
-      }
+        }
+
+      case vec =>
+        throw new UnsupportedOperationException(s"Unsupported vector type: ${vec.getField}")
     }
-    numRows += internalRows.size
-    writableColumnarVector.foreach(_.setValueCount(numRows))
+    valueVector.setValueCount(startIndex + numValues)
   }
 
-  def pruneFieldVectors(requiredFields: Array[String]): ju.List[FieldVector] = {
-    requiredFields.toList
-      .map(name => writableColumnarVector.find(vec => vec.getField.getName == name).get)
-      .asJava
+  def appendRows(internalRows: IndexedSeq[InternalRow]): Unit = {
+    val columnarGetters = new ColumnarGetters(internalRows, schema.fields.length)
+    for ((getter, i) <- columnarGetters.zipWithIndex) {
+      appendToValueVector(writableColumnarVector(i), getter, numRows, internalRows.size)
+    }
+    numRows += internalRows.size
   }
+
+  def pruneFieldVectors(requiredColumnsSchema: StructType): ju.List[FieldVector] = {
+    val outputVectors = new ju.ArrayList[FieldVector]()
+    requiredColumnsSchema.fields.foreach {
+      sf =>
+        val child = writableColumnarVector.find(vec => vec.getField.getName == sf.name).get
+        val childVecToAdd = sf.dataType match {
+          case st: StructType => new StructVectorView(child.asInstanceOf[StructVector], st)
+          case at: ArrayType => new ListVectorView(child.asInstanceOf[ListVector], at)
+          case _ => child
+        }
+        outputVectors.add(childVecToAdd)
+    }
+    outputVectors
+  }
+
+  def getRowCount(): Int = numRows
 }

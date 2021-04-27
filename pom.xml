@@ -9,7 +9,6 @@
     <scala.version>2.12.12</scala.version>
     <scala.compat.version>2.12</scala.compat.version>
     <spark.version>3.1.0</spark.version>
-    <arrow.version>0.15.1</arrow.version>
     <scalatest.version>3.2.2</scalatest.version>
     <scalatestplus-mockito.version>1.0.0-M2</scalatestplus-mockito.version>
   </properties>

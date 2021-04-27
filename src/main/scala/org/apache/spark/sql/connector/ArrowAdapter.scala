@@ -14,45 +14,34 @@
 
 package org.apache.spark.sql.connector
 
-import java.io.{ByteArrayOutputStream, InputStream}
 import java.{util => ju}
+import java.io.{ByteArrayOutputStream, InputStream}
 import java.nio.ByteBuffer
 import java.nio.channels.Channels
-
-import org.apache.arrow.memory.ArrowBuf
-
-import org.apache.arrow.memory.BufferAllocator
-import org.apache.arrow.util.AutoCloseables
-import org.apache.arrow.vector.{FieldVector, VectorLoader, VectorSchemaRoot, VectorUnloader}
-import org.apache.arrow.vector.ipc.{ReadChannel, WriteChannel}
-import org.apache.arrow.vector.ipc.message.{ArrowFieldNode, ArrowRecordBatch, MessageSerializer}
-import org.apache.arrow.vector.types.Types.MinorType
-import org.apache.arrow.vector.types.pojo.Schema
-import org.apache.spark.sql.types.{BinaryType, BooleanType, ByteType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, ShortType, StringType, StructField, StructType, TimestampType}
-import org.apache.spark.sql.util.ArrowUtils
-import org.apache.spark.sql.vectorized.{ArrowColumnVector, ColumnarBatch}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
+import org.apache.arrow.memory.{ArrowBuf, BufferAllocator}
+import org.apache.arrow.util.AutoCloseables
+import org.apache.arrow.vector.{FieldVector, VectorLoader, VectorSchemaRoot, VectorUnloader}
+import org.apache.arrow.vector.ipc.{ReadChannel, WriteChannel}
+import org.apache.arrow.vector.ipc.message.{ArrowFieldNode, ArrowRecordBatch, MessageSerializer}
+import org.apache.arrow.vector.types.pojo.Schema
+
+import org.apache.spark.sql.types.{StructField, StructType}
+import org.apache.spark.sql.util.ArrowUtils
+import org.apache.spark.sql.vectorized.{ArrowColumnVector, ColumnarBatch}
+
 object ArrowAdapter {
 
-  def toArrowMinorType(field: StructField): MinorType = field.dataType match {
-    case BooleanType => MinorType.BIT
-    case ByteType => MinorType.TINYINT
-    case ShortType => MinorType.SMALLINT
-    case IntegerType => MinorType.INT
-    case LongType => MinorType.BIGINT
-    case FloatType => MinorType.FLOAT4
-    case DoubleType => MinorType.FLOAT8
-    case StringType => MinorType.VARCHAR
-    case BinaryType => MinorType.VARBINARY
-    case _: DecimalType => MinorType.DECIMAL
-    case DateType => MinorType.DATEDAY
-    case TimestampType => MinorType.TIMESTAMPMICRO
-    case _ =>
-      MinorType.STRUCT
-      throw new UnsupportedOperationException(s"Unsupported data type: ${field.dataType}")
+  def createFieldVector(
+      sf: StructField,
+      allocator: BufferAllocator,
+      timeZoneId: String
+  ): FieldVector = {
+    ArrowUtils.toArrowField(sf.name, sf.dataType, sf.nullable, timeZoneId)
+      .createVector(allocator)
   }
 
   def serializeStructTypeToArrowSchemaBinary(

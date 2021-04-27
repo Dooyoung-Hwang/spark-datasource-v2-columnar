@@ -135,7 +135,7 @@ class InMemoryColumnarTable(
     }
     rowsGroupByPartition.foreach {
       case (key, rows) =>
-        val rb = dataMap.getOrElseUpdate(key, new WritableColumnarBatch(0, schema))
+        val rb = dataMap.getOrElseUpdate(key, new WritableColumnarBatch(schema, UTC.getId))
         rb.appendRows(rows.rows)
     }
     this
@@ -166,11 +166,11 @@ class InMemoryColumnarTable(
             if (requiredColumnsSchema.fields.isEmpty) {
               InMemoryTableScanPartition(
                 ArrowAdapter.emptyArrowSchemaBinary(),
-                ArrowAdapter.emptyFieldVectorsBinary(columnarBatch.numRows))
+                ArrowAdapter.emptyFieldVectorsBinary(columnarBatch.getRowCount()))
             } else {
-              val fieldVectors = columnarBatch.pruneFieldVectors(
-                requiredColumnsSchema.fields.map(_.name))
-              InMemoryTableScanPartition(requiredColumnsSchema, fieldVectors)
+              val fieldVectors = columnarBatch.pruneFieldVectors(requiredColumnsSchema)
+              InMemoryTableScanPartition(requiredColumnsSchema, fieldVectors,
+                columnarBatch.timeZone)
             }
         }.toArray
       }
